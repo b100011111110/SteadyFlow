@@ -1,104 +1,215 @@
-/* LangChain Orchestrator - Pure Responsive Horizon */
-$bg-color: #000000;
-$border-color: #334155;
-$accent-color: #bef264;
-$ai-accent: #a855f7;
+/* LAZYGIT-INSPIRED DESIGN SYSTEM */
+$bg: #000000;
+$panel-bg: #000000;
+$accent: #22c55e; /* Green */
+$accent-light: #4ade80;
+$text: #ffffff;
+$text-dim: #94a3b8;
+$border: #475569;
+$border-active: #ffffff;
 
-Screen { background: $bg-color; color: #fff; }
+Screen {
+    background: $bg;
+    color: $text;
+}
+
+Header {
+    background: $bg;
+    color: $accent;
+    text-style: bold;
+    height: 1;
+    border-bottom: solid $border;
+}
 
 #global-scroll {
+    height: 1fr;
+    width: 100%;
+    overflow: hidden; /* Force everything to stay within viewport */
+}
+
+#main-grid {
     height: 100%;
     width: 100%;
 }
 
-#main-grid {
-    layout: grid;
-    grid-gutter: 0 0;
+#main-grid.layout-split {
+    layout: horizontal;
+}
+
+#main-grid.layout-1 {
+    layout: vertical;
     height: auto;
-    min-height: 100%;
+}
+
+/* LEFT SECTION - LAZY BROWSER */
+#left-section {
+    height: 100%;
+    background: $bg;
+    layout: vertical;
+}
+
+.layout-split #left-section {
+    width: 50%;
+}
+
+.layout-1 #left-section {
+    width: 100%;
+    height: 50vh;
+}
+
+#browser-bar {
+    height: 1;
+    background: #1e293b;
+    layout: horizontal;
+    color: white;
+}
+
+#tabs {
+    width: 1fr;
+    background: transparent;
+    border: none;
+    height: 1;
+}
+
+Tabs > Tab {
+    background: transparent;
+    color: $text-dim;
+    padding: 0 1;
+}
+
+Tabs > Tab.-active {
+    background: $accent;
+    color: black;
+    text-style: bold;
+}
+
+#add-term-btn {
+    width: 3;
+    height: 1;
+    background: #334155;
+    color: white;
+    border: none;
+    text-style: bold;
+}
+
+#add-term-btn:hover {
+    background: $accent;
+    color: black;
+}
+
+#switcher {
+    height: 1fr;
+}
+
+#pane-chat, .term-container {
+    layout: vertical;
+    height: 100%; /* Keep this but ensure parent is constrained */
+}
+
+#ai-history, .term-log {
+    height: 1fr;
+    background: $bg;
+    border: round $border;
+    padding: 0 1;
+    overflow-x: hidden;
+}
+
+#ai-input-container, .term-input-area {
+    height: 3;
+    layout: horizontal;
+    background: $bg;
+    border: round $border;
+    margin: 0 1 1 1; /* Spacing from bottom and sides */
+    padding: 0 1;
+}
+
+#ai-input-container:focus-within, .term-input-area:focus-within {
+    border: round $border-active;
+}
+
+#ai-input, .term-input-area Input {
+    width: 1fr;
+    height: 1; /* Input itself stays small inside the box */
+    margin-top: 0;
+    background: transparent;
+    border: none;
+}
+
+/* RIGHT SECTION - DASHBOARD */
+#right-section {
+    height: 100%;
+}
+
+.layout-split #right-section {
+    width: 50%;
+    layout: horizontal;
+}
+
+#telemetry-column, #system-column {
+    height: 100%;
+    layout: vertical;
+}
+
+/* PANEL STYLING - LAZYGIT STYLE */
+.panel {
+    background: $bg;
+    border: round $border;
+    border-title-color: $accent;
+    border-title-style: bold;
+    margin: 0 1; /* Minimal spacing */
+}
+
+.panel:focus-within {
+    border: round $border-active;
+}
+
+/* COLUMN HEIGHTS */
+#agent-panel, #cloud-panel, #docker-panel, #k8s-panel {
+    height: 1fr;
+}
+
+#cpu-panel, #res-panel, #net-panel {
+    height: auto;
+    min-height: 3;
+}
+
+#proc-panel {
+    height: 1fr;
+}
+
+/* DATA TABLES */
+DataTable {
+    background: transparent;
+    color: $text;
+    overflow-x: hidden;
+}
+
+DataTable > .datatable--header {
+    background: transparent;
+    color: $text;
+    text-style: bold underline;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: black;
+    text-style: bold;
+}
+
+DataTable > .datatable--hover {
+    background: #1e293b;
+}
+
+/* HARDWARE METRICS */
+StatusBar {
+    height: 1;
+}
+
+#cpu-grid {
+    height: auto;
     width: 100%;
 }
 
-/* RESPONSIVE CLASSES */
-/* 1-Column Stack (Unified Verticality) */
-.layout-1 { 
-    grid-size: 1; 
-    grid-columns: 1fr; 
+.small-label {
+    color: $text-dim;
 }
-.layout-1 .column { height: auto; }
-.layout-1 .panel { height: 25; margin-bottom: 1; }
-.layout-1 #split-area { layout: vertical; height: auto; } /* Ensure Cloud/Docker/K8s stack vertically */
-.layout-1 #stack-panel { height: auto; }
-.layout-1 #docker-panel { height: 40; } /* Give Docker more room when stacked */
-.layout-1 #k8s-panel { height: 25; }
-
-/* 4-Column Master Grid (Fixed Command Center) */
-.layout-4 { grid-size: 4 1; grid-columns: 1fr 1fr 1fr 1fr; }
-.layout-4 #col-control { column-span: 2; }
-.layout-4 .column { height: 100%; }
-
-/* CPU Grid Responsive Classes */
-.cpu-1 { grid-size: 1; }
-.cpu-2 { grid-size: 2; }
-.cpu-4 { grid-size: 4; }
-
-.column { height: 100%; }
-
-.panel {
-    border: round $border-color;
-    border-title-align: left;
-    border-title-color: $accent-color;
-    border-title-style: bold;
-    margin: 0;
-    padding: 0;
-}
-
-/* GLOBAL SCROLLBAR THEME */
-* {
-    scrollbar-color: $accent-color 30%;
-    scrollbar-color-active: $accent-color;
-    scrollbar-color-hover: $accent-color 70%;
-}
-
-.panel DataTable { height: 1fr; scrollbar-gutter: stable; }
-
-/* COLUMN 1: AI (40/60 Ratio in 4-col) */
-#ai-chat-panel { height: 40%; border-title-color: $ai-accent; }
-#ai-history { height: 1fr; background: #000; overflow-y: scroll; }
-#ai-input { height: 1; border: none; background: #1e1b4b; color: $ai-accent; padding: 0 1; }
-#agent-panel { height: 60%; }
-
-/* COLUMN 2 & 3: CONTROL */
-#term-panel { height: 40%; }
-#term-tabs { height: 1; background: #0f172a; border-bottom: solid $border-color; }
-.term-tab { width: 3; height: 1; background: #1e293b; color: #94a3b8; text-align: center; }
-.term-tab.active { background: $accent-color; color: #000; text-style: bold; }
-#add-term { min-width: 3; height: 1; border: none; background: #334155; color: #fff; }
-#term-switcher { height: 1fr; background: #000; }
-#input-area { height: 1; background: #0f172a; padding: 0 1; }
-#terminal-input { height: 1; border: none; background: transparent; width: 1fr; }
-
-#split-area { height: 60%; }
-#cloud-panel { width: 1fr; }
-#stack-panel { width: 1.2fr; height: 100%; }
-#docker-panel { height: 1fr; }
-#k8s-panel { height: 1fr; }
-
-/* COLUMN 4: SYSTEM */
-#col-system { scrollbar-size: 0 0; }
-#cpu-panel { height: auto; min-height: 4; max-height: 50%; overflow-y: scroll; }
-#cpu-grid { 
-    layout: grid; 
-    height: auto; 
-    grid-gutter: 0 1;
-    padding: 0;
-    margin: 0;
-}
-
-#res-panel { height: auto; }
-#net-panel { height: auto; }
-#proc-panel { height: 1fr; } 
-
-StatusBar { height: 1; margin: 0; padding: 0; }
-.sub-title { color: $accent-color; height: 1; text-style: bold; margin-left: 1; }
-.small-label { color: #64748b; height: 1; padding-left: 1; }
