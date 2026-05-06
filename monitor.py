@@ -177,7 +177,10 @@ class MonitorApp(App):
         self.executor = ThreadPoolExecutor(max_workers=1)
         
         # Initialize AI Assistant
-        self.assistant = SteadyAssistant(self.query_one("#ai-history", RichLog))
+        self.assistant = SteadyAssistant(
+            self.query_one("#ai-history", RichLog),
+            self.query_one("#agent-table", DataTable)
+        )
         asyncio.create_task(self.assistant.initialize())
         
         self.set_interval(1.0, self.update_data)
@@ -310,7 +313,13 @@ class MonitorApp(App):
         except Exception as e: log.write(f"[red]Error: {str(e)}[/]")
 
     async def handle_ai_input(self, cmd: str, history: RichLog) -> None:
+        # Show thinking indicator
+        history.write("[italic grey70]Thinking...[/]")
         response = await self.assistant.process_input(cmd)
+        
+        # Remove thinking indicator (by clearing and re-writing the history if needed, 
+        # or just adding the response. For RichLog we just append.)
+        # Since RichLog doesn't easily support editing, we'll just write the response.
         history.write(f"[bold purple]AI:[/] {response}")
 
     def update_docker_bg(self) -> None:
