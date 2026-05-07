@@ -1,0 +1,13 @@
+mcp
+langchain
+langchain-openai
+langchain-core
+langgraph
+langchain-classic
+fastapi
+uvicorn
+rich
+python-dotenv
+tenacity
+httpx
+anyio

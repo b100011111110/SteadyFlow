@@ -476,7 +476,26 @@ INSTRUCTIONS:
         except Exception as e: return f"Assistant Error: {str(e)}"
 
     async def shutdown(self):
+        """Cleanup all resources and shutdown MCP servers."""
+        if self.log_widget:
+            self.log_widget.write("[bold yellow]Shutting down and cleaning up...[/]")
+        
+        # Call cleanup_all on every session that has it
+        for session in self.mcp_sessions:
+            try:
+                tools = await session.list_tools()
+                if any(t.name == "cleanup_all" for t in tools.tools):
+                    await session.call_tool("cleanup_all", {})
+            except Exception:
+                pass
+
         if self._exit_stack:
             try:
                 await self._exit_stack.aclose()
             except: pass
+        
+        if self.log_widget:
+            self.log_widget.write("[green]Shutdown complete.[/]")
+
+
+
