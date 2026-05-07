@@ -10,9 +10,17 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from textual.app import App, ComposeResult, events
 from textual.widgets import Header, Static, Label, RichLog, Input, DataTable, Button, Tabs, Tab, ContentSwitcher
-from textual.containers import Container, Vertical, Horizontal, Grid, ScrollableContainer
+from textual.containers import Container, Vertical, Horizontal, Grid, ScrollableContainer, VerticalScroll
 from textual.reactive import reactive
 from rich.text import Text
+
+class SelectableHistory(VerticalScroll):
+    def write(self, text: str):
+        # Use call_from_thread if needed, but here we assume it's called from main loop
+        msg = Static(text, classes="chat-msg")
+        msg.can_focus = True
+        self.mount(msg)
+        self.scroll_end(animate=False)
 from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
@@ -101,7 +109,7 @@ class MonitorApp(App):
                     
                     with ContentSwitcher(id="switcher", initial="pane-chat"):
                         with Vertical(id="pane-chat"):
-                            yield RichLog(id="ai-history", markup=True, wrap=True)
+                            yield SelectableHistory(id="ai-history")
                             with Horizontal(id="ai-input-container"):
                                 yield Input(placeholder="Message SteadyFlow...", id="ai-input")
                 
@@ -178,7 +186,7 @@ class MonitorApp(App):
         
         # Initialize AI Assistant
         self.assistant = SteadyAssistant(
-            self.query_one("#ai-history", RichLog),
+            self.query_one("#ai-history", SelectableHistory),
             self.query_one("#agent-table", DataTable)
         )
         asyncio.create_task(self.assistant.initialize())
@@ -257,15 +265,17 @@ class MonitorApp(App):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         val = event.value.strip()
         event.input.value = ""
+        input_widget = event.input
         if not val: return
 
         if event.input.id == "ai-input":
             if val.lower() == "goodbye":
                 self.exit()
                 return
-            history = self.query_one("#ai-history", RichLog)
-            history.write(f"[bold cyan]User:[/] {val}")
-            self.run_worker(self.handle_ai_input(val, history))
+            # Add message to selectable container
+            await self.add_message("User", val, "cyan")
+            input_widget.value = ""
+            self.run_worker(self.handle_ai_input(val))
         elif event.input.id and event.input.id.startswith("term-input-"):
             idx = int(event.input.id.split("-")[-1])
             log = self.query_one(f"#term-log-{idx}", RichLog)
@@ -312,15 +322,13 @@ class MonitorApp(App):
             if stdout: log.write(stdout.decode().strip())
         except Exception as e: log.write(f"[red]Error: {str(e)}[/]")
 
-    async def handle_ai_input(self, cmd: str, history: RichLog) -> None:
-        # Show thinking indicator
-        history.write("[italic grey70]Thinking...[/]")
+    async def add_message(self, author: str, text: str, color: str = "white"):
+        history = self.query_one("#ai-history", SelectableHistory)
+        history.write(f"[bold {color}]{author}:[/] {text}")
+
+    async def handle_ai_input(self, cmd: str) -> None:
         response = await self.assistant.process_input(cmd)
-        
-        # Remove thinking indicator (by clearing and re-writing the history if needed, 
-        # or just adding the response. For RichLog we just append.)
-        # Since RichLog doesn't easily support editing, we'll just write the response.
-        history.write(f"[bold purple]AI:[/] {response}")
+        await self.add_message("AI", response, "purple")
 
     def update_docker_bg(self) -> None:
         if self.docker_client: self.run_worker(self.fetch_docker())

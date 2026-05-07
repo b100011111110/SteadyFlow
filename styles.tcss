@@ -1,215 +1,105 @@
-/* LAZYGIT-INSPIRED DESIGN SYSTEM */
-$bg: #000000;
-$panel-bg: #000000;
-$accent: #22c55e; /* Green */
-$accent-light: #4ade80;
-$text: #ffffff;
-$text-dim: #94a3b8;
-$border: #475569;
-$border-active: #ffffff;
+/* Main styles for SteadyFlow TUI */
 
 Screen {
-    background: $bg;
-    color: $text;
+    background: #0a0a0a;
 }
 
-Header {
-    background: $bg;
-    color: $accent;
-    text-style: bold;
-    height: 1;
-    border-bottom: solid $border;
-}
-
-#global-scroll {
-    height: 1fr;
-    width: 100%;
-    overflow: hidden; /* Force everything to stay within viewport */
-}
-
-#main-grid {
+#layout {
     height: 100%;
     width: 100%;
 }
 
-#main-grid.layout-split {
-    layout: horizontal;
-}
-
-#main-grid.layout-1 {
-    layout: vertical;
-    height: auto;
-}
-
-/* LEFT SECTION - LAZY BROWSER */
 #left-section {
+    width: 60%;
     height: 100%;
-    background: $bg;
-    layout: vertical;
+    border-right: solid #333;
 }
 
-.layout-split #left-section {
-    width: 50%;
+#right-section {
+    width: 40%;
+    height: 100%;
 }
 
-.layout-1 #left-section {
-    width: 100%;
-    height: 50vh;
-}
-
-#browser-bar {
-    height: 1;
-    background: #1e293b;
-    layout: horizontal;
-    color: white;
-}
-
-#tabs {
-    width: 1fr;
-    background: transparent;
-    border: none;
-    height: 1;
-}
-
-Tabs > Tab {
-    background: transparent;
-    color: $text-dim;
-    padding: 0 1;
-}
-
-Tabs > Tab.-active {
-    background: $accent;
-    color: black;
-    text-style: bold;
+#tabs-container {
+    height: 3;
+    border-bottom: solid #333;
 }
 
 #add-term-btn {
-    width: 3;
-    height: 1;
-    background: #334155;
-    color: white;
-    border: none;
-    text-style: bold;
+    min-width: 4;
+    margin: 0 1;
 }
 
-#add-term-btn:hover {
-    background: $accent;
-    color: black;
+#pane-chat {
+    padding: 1;
 }
 
-#switcher {
+#chat_history {
     height: 1fr;
+    border: solid #222;
+    background: #0f0f0f;
+    padding: 1;
+    margin-bottom: 1;
 }
 
-#pane-chat, .term-container {
-    layout: vertical;
-    height: 100%; /* Keep this but ensure parent is constrained */
-}
-
-#ai-history, .term-log {
-    height: 1fr;
-    background: $bg;
-    border: round $border;
+.chat-msg {
+    margin-bottom: 1;
     padding: 0 1;
-    overflow-x: hidden;
-}
-
-#ai-input-container, .term-input-area {
-    height: 3;
-    layout: horizontal;
-    background: $bg;
-    border: round $border;
-    margin: 0 1 1 1; /* Spacing from bottom and sides */
-    padding: 0 1;
-}
-
-#ai-input-container:focus-within, .term-input-area:focus-within {
-    border: round $border-active;
-}
-
-#ai-input, .term-input-area Input {
-    width: 1fr;
-    height: 1; /* Input itself stays small inside the box */
-    margin-top: 0;
-    background: transparent;
-    border: none;
-}
-
-/* RIGHT SECTION - DASHBOARD */
-#right-section {
-    height: 100%;
-}
-
-.layout-split #right-section {
-    width: 50%;
-    layout: horizontal;
-}
-
-#telemetry-column, #system-column {
-    height: 100%;
-    layout: vertical;
-}
-
-/* PANEL STYLING - LAZYGIT STYLE */
-.panel {
-    background: $bg;
-    border: round $border;
-    border-title-color: $accent;
-    border-title-style: bold;
-    margin: 0 1; /* Minimal spacing */
-}
-
-.panel:focus-within {
-    border: round $border-active;
-}
-
-/* COLUMN HEIGHTS */
-#agent-panel, #cloud-panel, #docker-panel, #k8s-panel {
-    height: 1fr;
-}
-
-#cpu-panel, #res-panel, #net-panel {
-    height: auto;
-    min-height: 3;
-}
-
-#proc-panel {
-    height: 1fr;
-}
-
-/* DATA TABLES */
-DataTable {
-    background: transparent;
-    color: $text;
-    overflow-x: hidden;
-}
-
-DataTable > .datatable--header {
-    background: transparent;
-    color: $text;
-    text-style: bold underline;
-}
-
-DataTable > .datatable--cursor {
-    background: $accent;
-    color: black;
-    text-style: bold;
-}
-
-DataTable > .datatable--hover {
-    background: #1e293b;
-}
-
-/* HARDWARE METRICS */
-StatusBar {
-    height: 1;
-}
-
-#cpu-grid {
-    height: auto;
     width: 100%;
 }
 
+/* Make chat text selectable */
+.chat-msg:focus {
+    background: #1a1a1a;
+}
+
+#ai-input-container {
+    height: 3;
+}
+
+#telemetry-column {
+    width: 50%;
+    height: 100%;
+}
+
+#system-column {
+    width: 50%;
+    height: 100%;
+}
+
+.panel {
+    border: double #444;
+    margin: 0 1 1 1;
+    padding: 0 1;
+}
+
+#cpu-grid {
+    grid-size: 4;
+    height: auto;
+    margin-bottom: 1;
+}
+
+StatusBar {
+    height: 1;
+    margin-bottom: 0;
+}
+
 .small-label {
-    color: $text-dim;
+    color: #888;
+}
+
+.term-log {
+    height: 1fr;
+    background: black;
+    border: solid #222;
+}
+
+.term-input-area {
+    height: 3;
+    align-vertical: middle;
+}
+
+#agent-table, #cloud-table, #docker-table, #k8s-table, #proc-table {
+    height: 1fr;
+    border: none;
 }

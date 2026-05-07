@@ -106,6 +106,16 @@ class SteadyAssistant:
                     "args": [os.path.join(os.path.dirname(__file__), "mcp_memory_server.py")]
                 },
                 {
+                    "name": "git",
+                    "command": "python3",
+                    "args": [os.path.join(os.path.dirname(__file__), "mcp_git_server.py")]
+                },
+                {
+                    "name": "docker",
+                    "command": "python3",
+                    "args": [os.path.join(os.path.dirname(__file__), "mcp_docker_server.py")]
+                },
+                {
                     "name": "thinking",
                     "command": "npx",
                     "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
@@ -152,61 +162,88 @@ class SteadyAssistant:
             async def _call_llm_with_retry(msgs):
                 return await self.llm.ainvoke(msgs)
 
+            self.tool_cache = {}
+            
+            async def get_world_state():
+                """Fetch a summary of the current environment state."""
+                state_bits = []
+                try:
+                    # Files
+                    files = os.listdir(".")[:10]
+                    state_bits.append(f"Files: {', '.join(files)}")
+                    # Docker
+                    docker_p = await self.tool_to_session["docker"].call_tool("list_containers", {})
+                    state_bits.append(f"Docker: {docker_p.content[0].text[:100]}")
+                    # Git
+                    git_p = await self.tool_to_session["git"].call_tool("git_status", {})
+                    state_bits.append(f"Git: {git_p.content[0].text[:100]}")
+                except: pass
+                return "\n".join(state_bits)
+
             async def call_model(state: AgentState):
+                self.log_widget.write("[italic grey70]Thinking...[/]")
+                world_state = await get_world_state()
+                system_msg = SystemMessage(content=f"{self.system_prompt}\n\nCURRENT STATE:\n{world_state}")
+                
                 # Context Optimization: Filter history for relevance
                 user_msg = state["messages"][-1].content if state["messages"] else ""
-                messages = [state["messages"][0]] # System prompt
+                messages = [system_msg]
                 
-                # Simple keyword-based context relevance filter
                 for msg in state["messages"][1:-1]:
-                    # Always keep the last 3 for continuity
-                    if msg in state["messages"][-3:]:
-                        messages.append(msg)
-                    # Otherwise filter by keyword
+                    if msg in state["messages"][-5:]: messages.append(msg)
                     elif any(word.lower() in msg.content.lower() for word in user_msg.split() if len(word) > 4):
                         messages.append(msg)
                 
+                messages.append(state["messages"][-1])
+                
                 try:
                     response = await _call_llm_with_retry(messages)
+                    if response.tool_calls:
+                        for tc in response.tool_calls:
+                            self.log_widget.write(f"[dim]Planned: {tc['name']}[/]")
                     return {"messages": [response]}
                 except Exception as e:
-                    self.log_widget.write(f"[red]LLM Error after retries: {str(e)}[/]")
+                    self.log_widget.write(f"[red]LLM Error: {str(e)}[/]")
                     raise e
 
             async def execute_single_tool(tool_call):
                 name, args, tool_id = tool_call["name"], tool_call["args"], tool_call["id"]
                 
-                # Determine Effort Level
-                high_effort_tools = ["run_command", "write_file", "read_file"]
-                effort = "High" if name in high_effort_tools else "Low"
+                # Deduplication Check (Skip for side-effect tools)
+                cache_key = f"{name}:{json.dumps(args, sort_keys=True)}"
+                side_effect_tools = ["run_command", "write_file", "git_add", "git_commit", "docker_exec", "think"]
                 
-                # Show specific detail (like the command)
-                detail = args.get("command") or args.get("path") or ""
-                if len(detail) > 30: detail = detail[:27] + "..."
+                if cache_key in self.tool_cache and name not in side_effect_tools:
+                    self.log_widget.write(f"[dim]Using cached result for {name}[/]")
+                    return ToolMessage(tool_call_id=tool_id, content=f"CACHED RESULT: {self.tool_cache[cache_key]}")
                 
+                effort = "High" if name in ["run_command", "write_file"] else "Low"
+                detail = args.get("command") or args.get("path") or args.get("thought") or ""
                 self.task_registry.add_task(tool_id, name, effort, detail)
+                
+                self.log_widget.write(f"[bold cyan]Action:[/] {name} [grey50]({detail})[/]")
                 
                 try:
                     session = self.tool_to_session.get(name)
-                    if not session: res = f"Error: '{name}' not found."
-                    else:
-                        r = await session.call_tool(name, args)
-                        res = "".join([i.text if hasattr(i, 'text') else str(i.get('text', '')) for i in r.content])
+                    r = await session.call_tool(name, args)
+                    res = "".join([i.text if hasattr(i, 'text') else str(i.get('text', '')) for i in r.content])
+                    self.tool_cache[cache_key] = res # Cache result
                     self.task_registry.update_task(tool_id, "DONE", True)
                 except Exception as e: 
                     res = f"Error: {str(e)}"
                     self.task_registry.update_task(tool_id, "FAIL", False)
                 
-                # Shorter wait for "real-time" feel
                 await asyncio.sleep(0.5)
                 self.task_registry.remove_task(tool_id)
                 return ToolMessage(tool_call_id=tool_id, content=res)
 
             async def call_tools(state: AgentState):
                 last_message = state["messages"][-1]
-                # Run all tool calls in parallel
-                tasks = [execute_single_tool(tc) for tc in last_message.tool_calls]
-                tool_results = await asyncio.gather(*tasks)
+                # Run all tool calls sequentially
+                tool_results = []
+                for tc in last_message.tool_calls:
+                    res = await execute_single_tool(tc)
+                    tool_results.append(res)
                 return {"messages": tool_results}
 
             def should_continue(state: AgentState):
@@ -278,6 +315,7 @@ class SteadyAssistant:
 
     async def process_input(self, user_input: str):
         if not self.llm: return "Error: API key missing."
+        if not hasattr(self, "graph"): return "Error: Assistant graph not initialized. Check logs for startup errors."
         try:
             history = self.memory.load_memory_variables({})["chat_history"]
             initial_messages = [SystemMessage(content=self.system_prompt)] + history + [HumanMessage(content=user_input)]
