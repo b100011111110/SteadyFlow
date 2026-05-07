@@ -49,14 +49,18 @@ class TaskRegistry:
 
 class AgentState(TypedDict):
     messages: Annotated[list, operator.add]
-    current_task_context: str # Added for just-in-time context
+    current_task_context: str
+    plan: str
+    approved: bool
+    task_graph: list # Dynamic tasks
 
 class SteadyAssistant:
-    def __init__(self, log_widget, status_table, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
+    def __init__(self, log_widget, agent_table=None, app=None):
+        self.api_key = os.getenv("CEREBRAS_API_KEY")
         self.log_widget = log_widget
-        self.status_table = status_table
-        self.task_registry = TaskRegistry(status_table)
+        self.agent_table = agent_table
+        self.app = app
+        self.task_registry = TaskRegistry(agent_table)
         
         if self.api_key:
             self.llm = ChatOpenAI(
@@ -70,7 +74,15 @@ class SteadyAssistant:
             self.llm = None
 
         self.memory = ConversationBufferWindowMemory(memory_key="chat_history", return_messages=True, k=5)
-        self.system_prompt = "SteadyFlow AI Assistant. Identify as SteadyFlow AI Assistant."
+        self.system_prompt = """SteadyFlow AI Assistant. 
+You have advanced capabilities for log analysis and terminal management.
+
+GUIDELINES:
+1. Use 'mcp_terminal_server' to manage parallel tasks. Create named sessions for different logical tasks (e.g., 'build', 'test', 'monitor').
+2. Use 'mcp_log_server' for deep analysis. Follow logs, take notes in the scratchpad, and mark critical lines as 'comment' or 'code'.
+3. Use 'analyze_workspace' to synthesize your findings before giving a final answer for complex debugging tasks.
+4. You can create and destroy terminals as needed. The user will see your work in real-time in the TUI.
+"""
         self.mcp_sessions: List[ClientSession] = []
         self.tool_to_session: dict[str, ClientSession] = {}
         self._exit_stack = None
@@ -116,6 +128,21 @@ class SteadyAssistant:
                     "args": [os.path.join(os.path.dirname(__file__), "mcp_docker_server.py")]
                 },
                 {
+                    "name": "log",
+                    "command": "python3",
+                    "args": [os.path.join(os.path.dirname(__file__), "mcp_log_server.py")]
+                },
+                {
+                    "name": "api",
+                    "command": "python",
+                    "args": ["mcp_api_server.py"]
+                },
+                {
+                    "name": "lifecycle",
+                    "command": "python",
+                    "args": ["mcp_lifecycle_server.py"]
+                },
+                {
                     "name": "thinking",
                     "command": "npx",
                     "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
@@ -123,31 +150,52 @@ class SteadyAssistant:
             ]
             
             for config in server_configs:
+                self.log_widget.write(f"[dim]Initializing MCP server: {config['name']}...[/]")
                 server_params = StdioServerParameters(
                     command=config["command"],
                     args=config["args"],
                     env=os.environ.copy()
                 )
                 
-                read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
-                session = await self._exit_stack.enter_async_context(ClientSession(read, write))
-                await session.initialize()
-                
-                self.mcp_sessions.append(session)
-                mcp_tools = await session.list_tools()
-                
-                for tool in mcp_tools.tools:
-                    self.tool_to_session[tool.name] = session
-                    self.tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description[:50],
-                            "parameters": tool.inputSchema
-                        }
-                    })
+                try:
+                    read, write = await self._exit_stack.enter_async_context(stdio_client(server_params))
+                    session = await self._exit_stack.enter_async_context(ClientSession(read, write))
+                    await session.initialize()
+                    
+                    self.mcp_sessions.append(session)
+                    mcp_tools = await session.list_tools()
+                    
+                    for tool in mcp_tools.tools:
+                        self.tool_to_session[tool.name] = session
+                        
+                        # Inject Lifecycle Parameters into every tool schema
+                        schema = tool.inputSchema
+                        if "properties" not in schema: schema["properties"] = {}
+                        schema.setdefault("required", [])
+                        schema["properties"].update({
+                            "sleep": {"type": "integer", "description": "Seconds to sleep before execution"},
+                            "alarm": {"type": "string", "description": "Alarm ID to wait for before execution"},
+                            "wakeup": {"type": "string", "description": "Wakeup tag to wait for before execution"}
+                        })
+
+                        self.tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": tool.name,
+                                "description": tool.description[:100],
+                                "parameters": schema
+                            }
+                        })
+                    self.log_widget.write(f"[green]Server {config['name']} ready.[/]")
+                except Exception as e:
+                    self.log_widget.write(f"[red]Failed to start {config['name']}: {str(e)}[/]")
+                    # Continue with other servers instead of failing the whole graph
+                    continue
             
-            self.llm = self.llm.bind_tools(self.tools)
+            # Isolation: Create a dedicated LLM with tools for execution
+            # and keep a clean one for reasoning (planning/routing)
+            self.llm_with_tools = self.llm.bind_tools(self.tools)
+            self.planner_llm = self.llm
             
             workflow = StateGraph(AgentState)
             
@@ -171,92 +219,197 @@ class SteadyAssistant:
                     # Files
                     files = os.listdir(".")[:10]
                     state_bits.append(f"Files: {', '.join(files)}")
-                    # Docker
-                    docker_p = await self.tool_to_session["docker"].call_tool("list_containers", {})
-                    state_bits.append(f"Docker: {docker_p.content[0].text[:100]}")
-                    # Git
-                    git_p = await self.tool_to_session["git"].call_tool("git_status", {})
-                    state_bits.append(f"Git: {git_p.content[0].text[:100]}")
+                    # Sessions
+                    term_p = await self.tool_to_session["terminal"].call_tool("list_sessions", {})
+                    state_bits.append(f"Terminals: {term_p.content[0].text[:100]}")
+                    # API
+                    api_p = await self.tool_to_session["api"].call_tool("get_api_history", {})
+                    state_bits.append(f"API History: {api_p.content[0].text[:100]}")
                 except: pass
                 return "\n".join(state_bits)
 
-            async def call_model(state: AgentState):
-                self.log_widget.write("[italic grey70]Thinking...[/]")
+            # Intent Filtering Chain
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            router_prompt = ChatPromptTemplate.from_messages([
+                ("system", """Classify the user intent into one of three categories:
+CONVERSATIONAL: Greetings, thanks, small talk, or questions about YOUR capabilities (e.g. 'what can you do', 'who are you').
+SIMPLE: Single-step informational questions about the project, listing files, or checking a status.
+COMPLEX: Requests involving system changes, debugging multiple files, multi-step execution, or anything requiring a strategic approach.
+
+Output ONLY the category name."""),
+                ("human", "{input}")
+            ])
+            router_chain = router_prompt | self.planner_llm | StrOutputParser()
+
+            async def call_orchestrator(state: AgentState):
+                is_approved = state.get("approved", False)
+                has_plan = bool(state.get("plan", "").strip())
+                
+                if is_approved:
+                    return await dynamic_compiler(state)
+                
+                if has_plan:
+                    return {"messages": [AIMessage(content="Waiting for plan approval.")]}
+                
+                # Intent Filtering Layer
+                input_text = state["messages"][-1].content
+                intent_raw = await router_chain.ainvoke({"input": input_text})
+                intent = intent_raw.upper().strip()
+                
+                # OPTIMIZATION: If it's a simple status check, don't plan.
+                if any(word in input_text.lower() for word in ["what", "list", "show", "status", "check"]) and len(input_text.split()) < 10:
+                    intent = "SIMPLE"
+
+                if "CONVERSATIONAL" in intent:
+                    messages = [SystemMessage(content="Reply briefly.")] + state["messages"][-3:]
+                    response = await self.planner_llm.ainvoke(messages)
+                    return {"messages": [response], "plan": "", "approved": False}
+                
+                if "SIMPLE" in intent:
+                    self.log_widget.write("[dim]Direct Execution...[/]")
+                    messages = [SystemMessage(content=self.system_prompt)] + state["messages"][-5:]
+                    response = await self.llm_with_tools.ainvoke(messages)
+                    return {"messages": [response], "plan": "", "approved": False}
+                
+                return await call_planner(state)
+
+            async def call_planner(state: AgentState):
+                self.log_widget.write("[bold yellow]Formulating Strategy...[/]")
                 world_state = await get_world_state()
-                system_msg = SystemMessage(content=f"{self.system_prompt}\n\nCURRENT STATE:\n{world_state}")
+                user_request = state["messages"][-1].content
                 
-                # Context Optimization: Filter history for relevance
-                user_msg = state["messages"][-1].content if state["messages"] else ""
-                messages = [system_msg]
+                # Simplified but strict prompt
+                prompt = f"""Identify the GOAL, STEPS, and VERIFICATION for this request: "{user_request}"
                 
-                for msg in state["messages"][1:-1]:
-                    if msg in state["messages"][-5:]: messages.append(msg)
-                    elif any(word.lower() in msg.content.lower() for word in user_msg.split() if len(word) > 4):
-                        messages.append(msg)
-                
-                messages.append(state["messages"][-1])
-                
-                try:
-                    response = await _call_llm_with_retry(messages)
-                    if response.tool_calls:
-                        for tc in response.tool_calls:
-                            self.log_widget.write(f"[dim]Planned: {tc['name']}[/]")
-                    return {"messages": [response]}
-                except Exception as e:
-                    self.log_widget.write(f"[red]LLM Error: {str(e)}[/]")
-                    raise e
+You must use these tools if needed: create_session, run_in_session, read_file, list_containers.
 
-            async def execute_single_tool(tool_call):
-                name, args, tool_id = tool_call["name"], tool_call["args"], tool_call["id"]
-                
-                # Deduplication Check (Skip for side-effect tools)
-                cache_key = f"{name}:{json.dumps(args, sort_keys=True)}"
-                side_effect_tools = ["run_command", "write_file", "git_add", "git_commit", "docker_exec", "think"]
-                
-                if cache_key in self.tool_cache and name not in side_effect_tools:
-                    self.log_widget.write(f"[dim]Using cached result for {name}[/]")
-                    return ToolMessage(tool_call_id=tool_id, content=f"CACHED RESULT: {self.tool_cache[cache_key]}")
-                
-                effort = "High" if name in ["run_command", "write_file"] else "Low"
-                detail = args.get("command") or args.get("path") or args.get("thought") or ""
-                self.task_registry.add_task(tool_id, name, effort, detail)
-                
-                self.log_widget.write(f"[bold cyan]Action:[/] {name} [grey50]({detail})[/]")
-                
-                try:
-                    session = self.tool_to_session.get(name)
-                    r = await session.call_tool(name, args)
-                    res = "".join([i.text if hasattr(i, 'text') else str(i.get('text', '')) for i in r.content])
-                    self.tool_cache[cache_key] = res # Cache result
-                    self.task_registry.update_task(tool_id, "DONE", True)
-                except Exception as e: 
-                    res = f"Error: {str(e)}"
-                    self.task_registry.update_task(tool_id, "FAIL", False)
-                
-                await asyncio.sleep(0.5)
-                self.task_registry.remove_task(tool_id)
-                return ToolMessage(tool_call_id=tool_id, content=res)
+FORMAT:
+# GOAL
+[Text]
+# STEPS
+1. [Step]
+2. [Step]
+# VERIFICATION
+[Text]
 
-            async def call_tools(state: AgentState):
+SYSTEM STATE:
+{world_state}"""
+                
+                response = await self.planner_llm.ainvoke([HumanMessage(content=prompt)])
+                
+                if not response.content.strip() or len(response.content) < 50:
+                    self.log_widget.write("[dim]Plan was too short. Retrying with history...[/]")
+                    messages = [SystemMessage(content="Provide a detailed multi-step plan for the user's request.")] + state["messages"][-3:]
+                    response = await self.planner_llm.ainvoke(messages)
+
+                if self.app:
+                    self.app.display_plan(response.content)
+                
+                return {"messages": [response], "plan": response.content.strip(), "approved": False}
+
+            async def dynamic_compiler(state: AgentState):
+                self.log_widget.write("[bold purple]Executing Plan...[/]")
+                plan = state.get("plan", "")
+                prompt = f"""The plan is APPROVED. You MUST follow it strictly step-by-step.
+PLAN:
+{plan}
+
+INSTRUCTIONS:
+1. Execute the next logical step in the plan using the available tools.
+2. After EACH significant tool call, use 'update_scratchpad' to log your current progress and any findings.
+3. If you finish all steps, provide a final summary of the verification results.
+"""
+                messages = [SystemMessage(content=prompt)] + state["messages"][-10:]
+                response = await self.llm_with_tools.ainvoke(messages)
+                return {"messages": [response], "plan": plan, "approved": True}
+
+            async def execute_tool_logic(state: AgentState):
                 last_message = state["messages"][-1]
-                # Run all tool calls sequentially
                 tool_results = []
+                plan = state.get("plan", "")
+                approved = state.get("approved", False)
+                
                 for tc in last_message.tool_calls:
-                    res = await execute_single_tool(tc)
-                    tool_results.append(res)
-                return {"messages": tool_results}
+                    name, args, tool_id = tc["name"], tc["args"], tc["id"]
+                    
+                    # Intercept Lifecycle Parameters
+                    if "sleep" in args:
+                        s_time = args.pop("sleep")
+                        self.log_widget.write(f"[yellow]Lifecycle: Sleeping for {s_time}s...[/]")
+                        await self.tool_to_session["lifecycle"].call_tool("sleep_task", {"seconds": s_time})
+                    
+                    if "alarm" in args:
+                        a_id = args.pop("alarm")
+                        self.log_widget.write(f"[yellow]Lifecycle: Waiting for alarm '{a_id}'...[/]")
+                        await self.tool_to_session["lifecycle"].call_tool("wait_for_alarm", {"alarm_id": a_id})
+                    
+                    if "wakeup" in args:
+                        w_tag = args.pop("wakeup")
+                        self.log_widget.write(f"[yellow]Lifecycle: Waiting for wakeup signal '{w_tag}'...[/]")
+                        await self.tool_to_session["lifecycle"].call_tool("wait_for_wakeup", {"tag": w_tag})
 
-            def should_continue(state: AgentState):
-                last_message = state["messages"][-1]
-                return "continue" if last_message.tool_calls else "end"
+                    self.log_widget.write(f"[bold cyan]Action:[/] {name}")
+                    
+                    try:
+                        session = self.tool_to_session.get(name)
+                        r = await session.call_tool(name, args)
+                        res = "".join([i.text if hasattr(i, 'text') else str(i.get('text', '')) for i in r.content])
+                        
+                        # UI HOOKS
+                        if self.app:
+                            if name in ["create_session", "run_in_session", "close_session"]:
+                                if name == "create_session": self.app.create_terminal(args.get("session_id"))
+                                elif name == "run_in_session": self.app.append_to_terminal(args.get("session_id"), args.get("command"), res)
+                                elif name == "close_session": self.app.remove_terminal(args.get("session_id"))
+                            elif name in ["follow_log", "update_scratchpad", "add_document"]:
+                                if name == "follow_log": self.app.add_log_to_workspace(args.get("path"))
+                                elif name == "update_scratchpad": self.app.update_workspace_scratchpad(args.get("content"))
+                                elif name == "add_document": self.app.add_workspace_document(args.get("name"), args.get("content"))
+                            elif name in ["api_request", "manage_env"]:
+                                if name == "api_request": self.app.add_api_to_workspace(args.get("url"), args.get("method"), res)
+                                elif name == "manage_env": self.app.update_api_env(args.get("key"), args.get("value"))
 
-            workflow.add_node("agent", call_model)
-            workflow.add_node("tools", call_tools)
-            workflow.set_entry_point("agent")
-            workflow.add_conditional_edges("agent", should_continue, {"continue": "tools", "end": END})
-            workflow.add_edge("tools", "agent")
+                        tool_results.append(ToolMessage(tool_call_id=tool_id, content=res))
+                    except Exception as e:
+                        tool_results.append(ToolMessage(tool_call_id=tool_id, content=f"Error: {str(e)}"))
+                
+                return {"messages": tool_results, "plan": plan, "approved": approved}
+
+            def route_orchestrator(state: AgentState):
+                # 1. If we have a plan but no approval, stop and wait for user
+                if state.get("plan") and not state.get("approved"):
+                    return "end"
+                
+                # 2. Check the last message from the assistant
+                last_msg = state["messages"][-1]
+                
+                # 3. If the agent called tools, execute them
+                if last_msg.tool_calls:
+                    return "execute"
+                
+                # 4. If no tools and no plan, we are done (Conversational turn)
+                if not state.get("plan"):
+                    return "end"
+                
+                # 5. If we were approved and finished, we are done
+                if state.get("approved"):
+                    return "end"
+                
+                # 6. Default to orchestration loop
+                return "orchestrate"
+
+            workflow.add_node("orchestrator", call_orchestrator)
+            workflow.add_node("tool_executor", execute_tool_logic)
+            workflow.set_entry_point("orchestrator")
+            workflow.add_conditional_edges("orchestrator", route_orchestrator, {"execute": "tool_executor", "orchestrate": "orchestrator", "end": END})
+            workflow.add_edge("tool_executor", "orchestrator")
+            
             self.graph = workflow.compile()
-            self.log_widget.write("[green]SteadyFlow Graph Initialized.[/]")
+            self.state = {"messages": [], "plan": "", "approved": False, "task_graph": []}
+            self.log_widget.clear()
+            self.log_widget.write("[bold green]SteadyFlow Meta-Orchestration v2.3 (Strict Text Approval) Live.[/]")
         except Exception as e:
             self.log_widget.write(f"[yellow]Graph init failed: {str(e)}[/]")
 
@@ -265,7 +418,7 @@ class SteadyAssistant:
             try:
                 with open(self.history_file, "r") as f:
                     data = json.load(f)
-                    for item in data[-5:]: # Only load last 5
+                    for item in data[-5:]:
                         self.memory.save_context({"input": item["input"]}, {"output": item["output"]})
             except: pass
 
@@ -283,51 +436,47 @@ class SteadyAssistant:
                 json.dump(history, f, indent=2)
         except: pass
 
-    async def _parse_json_tool_calls(self, content: str) -> List[dict]:
-        import re
-        tool_calls = []
-        potential_objects = []
-        start_indices = [m.start() for m in re.finditer(r'\{', content)]
-        for start in start_indices:
-            stack = 0
-            for i in range(start, len(content)):
-                if content[i] == '{': stack += 1
-                elif content[i] == '}':
-                    stack -= 1
-                    if stack == 0:
-                        potential_objects.append(content[start:i+1])
-                        break
-        for obj_str in potential_objects:
-            try:
-                parsed = json.loads(obj_str)
-                if isinstance(parsed, dict) and ("name" in parsed or "function" in parsed):
-                    name = parsed.get("name") or parsed.get("function", {}).get("name")
-                    args = parsed.get("arguments") or parsed.get("args") or parsed.get("function", {}).get("arguments") or {}
-                    if any(tc["name"] == name and tc["args"] == args for tc in tool_calls): continue
-                    if name:
-                        tool_calls.append({
-                            "name": name,
-                            "args": args,
-                            "id": f"call_{int(asyncio.get_event_loop().time() * 1000)}_{len(tool_calls)}"
-                        })
-            except: continue
-        return tool_calls
-
     async def process_input(self, user_input: str):
         if not self.llm: return "Error: API key missing."
-        if not hasattr(self, "graph"): return "Error: Assistant graph not initialized. Check logs for startup errors."
+        if not hasattr(self, "graph"): return "Error: Assistant graph not initialized."
+        
         try:
-            history = self.memory.load_memory_variables({})["chat_history"]
-            initial_messages = [SystemMessage(content=self.system_prompt)] + history + [HumanMessage(content=user_input)]
+            # Handle approval signal
+            if user_input.lower() in ["confirm", "approve", "yes"]:
+                if self.state.get("plan") and not self.state.get("approved"):
+                    self.state["approved"] = True
+                    self.log_widget.write("[bold green]Plan Approved. Starting Execution...[/]")
+                else:
+                    return "Nothing to approve at the moment."
+            elif user_input.lower() in ["reject", "no"]:
+                self.state["plan"] = ""
+                self.state["approved"] = False
+                return "Plan rejected. What would you like me to do instead?"
+            else:
+                # New task or follow-up
+                self.state["messages"].append(HumanMessage(content=user_input))
+                self.state["plan"] = "" # Reset plan for new task
+                self.state["approved"] = False
+
+            # Execute graph
+            self.log_widget.clear() # Clear for new turn
+            final_state = await self.graph.ainvoke(self.state)
+            self.state.update(final_state)
             
-            # Execute via LangGraph
-            final_state = await self.graph.ainvoke({"messages": initial_messages})
+            # Reset approved state if the task is finished (graph returned to END)
+            if self.state.get("approved"):
+                self.state["plan"] = ""
+                self.state["approved"] = False
             
-            final_response = final_state["messages"][-1].content
-            self.memory.save_context({"input": user_input}, {"output": final_response})
-            self._save_history(user_input, final_response)
+            final_response = self.state["messages"][-1].content
+            if self.state["plan"] and not self.state["approved"]:
+                return f"I have generated a plan. Please review it on the right and type 'confirm' to proceed.\n\n{final_response}"
+            
             return final_response
         except Exception as e: return f"Assistant Error: {str(e)}"
 
     async def shutdown(self):
-        if self._exit_stack: await self._exit_stack.aclose()
+        if self._exit_stack:
+            try:
+                await self._exit_stack.aclose()
+            except: pass

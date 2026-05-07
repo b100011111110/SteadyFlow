@@ -10,13 +10,13 @@ Screen {
 }
 
 #left-section {
-    width: 60%;
+    width: 6fr;
     height: 100%;
     border-right: solid #333;
 }
 
 #right-section {
-    width: 40%;
+    width: 4fr;
     height: 100%;
 }
 
@@ -58,18 +58,18 @@ Screen {
 }
 
 #telemetry-column {
-    width: 50%;
+    width: 1fr;
     height: 100%;
 }
 
 #system-column {
-    width: 50%;
+    width: 1fr;
     height: 100%;
 }
 
 .panel {
     border: double #444;
-    margin: 0 1 1 1;
+    margin: 1;
     padding: 0 1;
 }
 
@@ -102,4 +102,166 @@ StatusBar {
 #agent-table, #cloud-table, #docker-table, #k8s-table, #proc-table {
     height: 1fr;
     border: none;
+}
+
+/* LOG WORKSPACE STYLES */
+#pane-logs {
+    padding: 1;
+}
+
+#logs-header {
+    height: 3;
+    border-bottom: solid #444;
+    margin-bottom: 1;
+}
+
+#logs-title {
+    width: 100%;
+    text-align: center;
+    color: #00d7ff;
+    text-style: bold;
+}
+
+#logs-main {
+    height: 1fr;
+}
+
+#logs-left {
+    width: 60%;
+    height: 100%;
+    border-right: solid #333;
+    padding-right: 1;
+}
+
+#logs-right {
+    width: 40%;
+    height: 100%;
+    padding-left: 1;
+}
+
+.sub-title {
+    color: #ffaf00;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#logs-list {
+    height: 60%;
+    border: solid #222;
+    margin-bottom: 1;
+}
+
+#docs-table {
+    height: 40%;
+    border: solid #222;
+}
+
+#scratchpad-log {
+    height: 1fr;
+    background: #0d0d0d;
+    border: solid #222;
+    color: #a8a8a8;
+}
+
+.log-item {
+    margin-bottom: 1;
+    border: solid #333;
+}
+
+.log-file-header {
+    background: #1a1a1a;
+    color: #87ff00;
+    padding: 0 1;
+}
+
+.log-stream {
+    height: 10;
+    background: black;
+}
+
+/* API WORKSPACE STYLES */
+#pane-api {
+    padding: 1;
+}
+
+#api-header {
+    height: 3;
+    border-bottom: solid #444;
+    margin-bottom: 1;
+}
+
+#api-title {
+    width: 100%;
+    text-align: center;
+    color: #ff00ff;
+    text-style: bold;
+}
+
+#api-main {
+    height: 1fr;
+}
+
+#api-left {
+    width: 50%;
+    height: 100%;
+    border-right: solid #333;
+    padding-right: 1;
+}
+
+#api-right {
+    width: 50%;
+    height: 100%;
+    padding-left: 1;
+}
+
+#api-env-table {
+    height: 40%;
+    border: solid #222;
+    margin-bottom: 1;
+}
+
+#api-history-table {
+    height: 60%;
+    border: solid #222;
+}
+
+#api-response-log {
+    height: 1fr;
+    background: #050505;
+    border: solid #222;
+    color: #00ff00;
+}
+
+/* PLANNING PANEL STYLES */
+#planning-panel {
+    height: 1fr;
+    background: #1a1a3a;
+    border: solid #00ff00;
+}
+
+#plan-display {
+    height: 1fr;
+    background: #000;
+    border: inner #444;
+    padding: 1;
+    color: #e0e0e0;
+}
+
+#plan-controls {
+    height: 3;
+    align: center middle;
+    margin-top: 1;
+}
+
+#plan-controls Button {
+    margin: 0 1;
+}
+
+.plan-active {
+    border: double #00ff00;
+    background: #1a1a2a;
+}
+
+#planning-panel {
+    border: solid #ffaf00;
 }
